@@ -243,7 +243,15 @@ html,body{width:100%;height:100%;background:#2a1a0a;overflow:hidden;display:flex
             <div style="font-size:13px;color:#8a6a50;line-height:1.7" id="memDetailText"></div>
           </div>
         </div>
-
+        <!-- API 키 입력 (닮은 강아지 찾기용) -->
+        <div class="card card-p" style="margin-top:12px;border:1.5px solid #e8f0fb;background:#f8faff">
+          <div style="font-size:12px;font-weight:800;color:#3a70c0;margin-bottom:6px">🔑 Claude Vision 연동 <span style="font-weight:500;color:#aaa">(닮은 강아지 찾기)</span></div>
+          <div style="font-size:11px;color:#aaa;margin-bottom:8px">Anthropic API 키를 입력하면 콩이 사진과 외모를 직접 비교해요</div>
+          <input id="apiKeyInput" type="password" placeholder="sk-ant-..." 
+            style="width:100%;border:1.5px solid #d0d8f0;border-radius:10px;padding:9px 12px;font-size:12px;font-family:monospace;color:#333;outline:none;background:#fff"
+            oninput="G.saveApiKey(this.value)">
+          <div id="apiKeyStatus" style="font-size:11px;margin-top:5px;color:#aaa">키 없으면 색상 기반 매칭 사용</div>
+        </div>
       </div>
     </div>
 
@@ -1176,9 +1184,30 @@ const G = {
 
   // ── PHOTO UPLOAD ──────────────────────────────────
   uploadPhoto(){
-    // file input 트리거 (handleKongPhoto가 실제 처리)
-    const inp = document.getElementById('kongPhotoInput');
-    if(inp) inp.click();
+    const slot=document.getElementById('photoSlot');
+    slot.classList.add('done');
+    // 단계별 생성 메시지
+    const steps=[
+      {icon:'📷',msg:'사진 분석 중...'},
+      {icon:'🎨',msg:'캐릭터 생성 중...'},
+      {icon:'✨',msg:'콩이 완성!'},
+    ];
+    let si=0;
+    slot.innerHTML=`<div style="font-size:36px;margin-bottom:8px">${steps[0].icon}</div><div id="uploadMsg" style="font-size:14px;color:#5cb87a;font-weight:800">${steps[0].msg}</div>`;
+    slot.onclick=null;
+    const stepTimer=setInterval(()=>{
+      si++;
+      if(si>=steps.length){clearInterval(stepTimer);return;}
+      const el=document.getElementById('uploadMsg');
+      const ic=slot.querySelector('div');
+      if(el) el.textContent=steps[si].msg;
+      if(ic) ic.textContent=steps[si].icon;
+    },900);
+    setTimeout(async()=>{
+      await G.pickMatchedDog();
+      G.closeZone('memory');
+      setTimeout(()=>G.startKongStory(),400);
+    },2800);
   },
 
   startKongStory(){
@@ -1282,7 +1311,7 @@ const G = {
   encounterDone: false,
   _encScene: 'adoption',
   _matchedDog: null,  // 어드민 등록 강아지 중 콩이와 가장 닮은 강아지
-  _apiKey: '', // 서버에서 관리
+  _apiKey: '',
 
   saveApiKey(key){
     G._apiKey = key.trim();
@@ -1293,7 +1322,14 @@ const G = {
   },
 
   loadApiKey(){
-    // API 키 하드코딩 — 별도 입력 불필요
+    try{
+      const k = localStorage.getItem('rg_api_key') || '';
+      G._apiKey = k;
+      const el = document.getElementById('apiKeyInput');
+      if(el && k) el.value = k;
+      const el2 = document.getElementById('apiKeyStatus');
+      if(el2 && k){ el2.textContent='✓ 키 저장됨 — Vision 매칭 활성'; el2.style.color='#5cb87a'; }
+    }catch(e){}
   },
   _encStep: 0,
   _encTyping: false,
@@ -1307,7 +1343,6 @@ const G = {
 
   startEncounter(){
     if(G.encounterDone) return;
-    console.log('[Encounter 시작] matchedDog:', G._matchedDog?.name, '| kongPhotoB64:', !!G._kongPhotoB64);
     // 어드민 사진 미리 로드
     if(G._matchedDog && G._matchedDog.photo){
       G._encMatchImg = new Image();
@@ -1761,8 +1796,7 @@ const G = {
     if(!grid) return;
     grid.innerHTML = ''; // 매번 새로 그리기 (어드민 변경사항 반영)
     // 관리자 콘솔에서 등록한 데이터 우선 사용
-    try {
-      const adminDogs = JSON.parse(localStorage.getItem('rg_admin_dogs') || '[]');
+    fetch('/api/dogs').then(r=>r.ok?r.json():[]).catch(()=>[]).then(adminDogs=>{
       if(adminDogs.length > 0){
         G._dogs = adminDogs.map(d=>({
           name:d.name, breed:d.breed, gender:d.gender, age:d.age,
@@ -1773,7 +1807,6 @@ const G = {
           _status: d.status,
         }));
       }
-    } catch(e){}
     G._dogs.forEach(d => {
       const card = document.createElement('div');
       card.style.cssText='background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.09);margin-bottom:14px';
@@ -1797,6 +1830,7 @@ const G = {
         </div>`;
       grid.appendChild(card);
     });
+    }); // fetch then 닫기
   },
 
   adoptDog(name){
@@ -1970,19 +2004,13 @@ const G = {
   _renderFriendZone(){
     const list = document.getElementById('friendZoneList');
     if(!list) return;
-    // 어드민에서 삭제된 강아지는 친구 목록에서도 제거
-    try{
-      const adminDogs = JSON.parse(localStorage.getItem('rg_admin_dogs')||'[]');
-      if(adminDogs.length > 0){
-        const adminNames = adminDogs.map(d=>d.name);
-        G._friends = G._friends.filter(f=>{
-          // 어드민 등록 강아지면 현재도 존재하는지 확인
-          const isAdminDog = ['코코','몽이','하루','초코','루나','딸기'].includes(f.name);
-          if(!isAdminDog) return true; // 기본 강아지는 항상 유지
-          return adminNames.includes(f.name);
-        });
+    // 어드민에서 삭제된 강아지 필터 (서버 조회)
+    fetch('/api/dogs').then(r=>r.ok?r.json():[]).then(adminDogs=>{
+      if(adminDogs.length>0){
+        const adminNames=adminDogs.map(d=>d.name);
+        G._friends=G._friends.filter(f=>adminNames.includes(f.name)||['코코','몽이','하루','초코','루나','딸기'].includes(f.name));
       }
-    }catch(e){}
+    }).catch(()=>{});
     if(G._friends.length === 0){
       list.innerHTML = '<div style="text-align:center;padding:50px 0"><div style="font-size:52px;margin-bottom:14px">🐾</div><div style="font-size:15px;font-weight:800;color:#3d2b1a;margin-bottom:8px">아직 친구가 없네요!</div><div style="font-size:13px;color:#aaa;line-height:1.7">입양센터에서 콩이 친구를<br>사귀어보세요 🌈</div></div>';
       return;
@@ -2084,19 +2112,14 @@ const G = {
 
 
   _logAdminActivity(dogName, type){
-    try{
-      const dogs = JSON.parse(localStorage.getItem('rg_admin_dogs')||'[]');
-      const dog = dogs.find(d=>d.name===dogName);
+    fetch('/api/dogs').then(r=>r.ok?r.json():[]).then(dogs=>{
+      const dog=dogs.find(d=>d.name===dogName);
       if(!dog) return;
-      // 강아지 카운트 업데이트
-      if(type==='friend') dog.friendCount=(dog.friendCount||0)+1;
-      if(type==='adopt'){ dog.adoptCount=(dog.adoptCount||0)+1; dog.status='adopted'; }
-      localStorage.setItem('rg_admin_dogs', JSON.stringify(dogs));
-      // 활동 로그
-      const acts = JSON.parse(localStorage.getItem('rg_activity')||'[]');
-      acts.push({dogId:dog.id, type, at:new Date().toISOString()});
-      localStorage.setItem('rg_activity', JSON.stringify(acts));
-    }catch(e){}
+      fetch('/api/activity',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({dogId:dog.id, type})
+      }).catch(e=>console.warn('활동기록 실패',e));
+    }).catch(e=>console.warn('활동기록 실패',e));
   },
 
 
@@ -2126,9 +2149,8 @@ const G = {
         const el = document.getElementById('uploadMsg');
         if(el) el.textContent = steps[si];
       }, 900);
-      setTimeout(async () => {
-        await G.pickMatchedDog(); // 매칭 완료까지 대기
-        console.log('매칭 완료, matchedDog:', G._matchedDog?.name);
+      setTimeout(() => {
+        G.pickMatchedDog(); // 유사도 비교 실행
         G.closeZone('memory');
         setTimeout(() => G.startKongStory(), 400);
       }, 1800);
@@ -2138,31 +2160,23 @@ const G = {
 
   async pickMatchedDog(){
     try {
-      const adminDogs = JSON.parse(localStorage.getItem('rg_admin_dogs') || '[]');
+      const adminDogs = await fetch('/api/dogs').then(r=>r.ok?r.json():[]).catch(()=>[]);
       const waiting = adminDogs.filter(d => d.status !== 'adopted');
       if(waiting.length === 0){ G._matchedDog = null; return; }
-      if(waiting.length === 1){ G._matchedDog = G._makeDogObj(waiting[0]); console.log('[매칭] 1마리 → 자동선택:', waiting[0].name); return; }
+      if(waiting.length === 1){ G._matchedDog = G._makeDogObj(waiting[0]); return; }
 
+      // 콩이 사진이 있으면 Claude Vision으로 외모 비교
       if(G._kongPhotoB64){
-        // await으로 매칭 완료까지 대기
-        await new Promise(resolve => {
-          G._matchWithVision(G._kongPhotoB64, waiting, (best) => {
-            G._matchedDog = G._makeDogObj(best);
-            resolve();
-          });
+        G._matchWithVision(G._kongPhotoB64, waiting, (best) => {
+          G._matchedDog = G._makeDogObj(best);
         });
       } else {
-        await new Promise(resolve => {
-          G._matchByColor(waiting, (best) => {
-            G._matchedDog = G._makeDogObj(best);
-            resolve();
-          });
+        // 콩이 사진 없으면 색상 기반 매칭 (fallback)
+        G._matchByColor(waiting, (best) => {
+          G._matchedDog = G._makeDogObj(best);
         });
       }
-    } catch(e) {
-      console.warn('pickMatchedDog 에러:', e);
-      G._matchedDog = null;
-    }
+    } catch(e) { G._matchedDog = null; }
   },
 
   _makeDogObj(d){
@@ -2174,35 +2188,54 @@ const G = {
   // Claude Vision API로 콩이 사진 ↔ 어드민 강아지 외모 비교
   async _matchWithVision(kongB64, dogs, callback){
     try {
-      const mime = kongB64.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
-      const b64  = kongB64.split(',')[1] || kongB64;
+      // 이미지 배열 구성 (콩이 + 어드민 강아지들)
+      const content = [];
+      content.push({ type:'text', text:'다음은 콩이(강아지 사진)입니다:' });
+      const kongMime = kongB64.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
+      content.push({ type:'image', source:{ type:'base64', media_type:kongMime, data: kongB64.split(',')[1] || kongB64 }});
+      content.push({ type:'text', text:`
+아래 ${dogs.length}마리의 강아지 사진들 중에서 위 콩이와 외모가 가장 닮은 강아지의 번호만 숫자 하나로 답해주세요. 털색, 눈코입 생김새, 귀 크기, 체형 등 전반적인 외모를 비교해주세요.
+` });
 
-      const res = await fetch('/api/match', {
+      dogs.forEach((dog, i) => {
+        content.push({ type:'text', text:`${i+1}번: ${dog.name}` });
+        if(dog.photo){
+          const dogMime = dog.photo.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
+          content.push({ type:'image', source:{ type:'base64', media_type:dogMime, data: dog.photo.split(',')[1] || dog.photo }});
+        } else {
+          content.push({ type:'text', text:`(사진 없음, 품종: ${dog.breed||'믹스'}, 배경색: ${dog.bg})` });
+        }
+      });
+
+      content.push({ type:'text', text:'가장 닮은 강아지 번호 (숫자만):' });
+
+      if(!G._apiKey){
+        console.log('API 키 없음 → 색상 fallback');
+        G._matchByColor(dogs, callback);
+        return;
+      }
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': G._apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
         body: JSON.stringify({
-          kongImage: { data: b64, mime },
-          dogs: dogs.map(d=>({
-            name: d.name,
-            breed: d.breed||'믹스',
-            // 사진은 있을 때만, 너무 크면 제외 (4MB 제한)
-            photo: (d.photo && d.photo.length < 3000000) ? {
-              data: d.photo.split(',')[1]||d.photo,
-              mime: d.photo.startsWith('data:image/png')?'image/png':'image/jpeg'
-            } : null
-          }))
+          model: 'claude-sonnet-4-6',
+          max_tokens: 10,
+          messages: [{ role:'user', content }]
         })
       });
-      if(!res.ok) throw new Error('서버 에러 ' + res.status);
-      const data = await res.json();
-      if(data.error) throw new Error(data.error);
 
-      const best = dogs.find(d=>d.name===data.name) || dogs[0];
-      console.log('매칭 결과:', best.name, '(품종:', data.breed+')');
+      const data = await res.json();
+      const text = data.content?.[0]?.text?.trim() || '1';
+      const idx = parseInt(text) - 1;
+      const best = dogs[Math.max(0, Math.min(idx, dogs.length-1))];
       callback(best);
     } catch(e) {
-      console.error('[Vision 매칭 실패]', e.message);
-      console.error('matchedDog fallback → 색상 기반 매칭 실행');
+      console.warn('Vision 매칭 실패, 색상 fallback:', e);
       G._matchByColor(dogs, callback);
     }
   },
@@ -2231,6 +2264,41 @@ const G = {
     };
     img.onerror = () => callback(dogs[0]);
     img.src = G._kongPhotoB64;
+  },
+
+
+  async _matchWithVision(kongB64, dogs, callback){
+    try {
+      const mime = kongB64.startsWith('data:image/png') ? 'image/png' : 'image/jpeg';
+      const b64  = kongB64.split(',')[1] || kongB64;
+      const res = await fetch('/api/match', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kongImage: { data: b64, mime },
+          dogs: dogs.map(d=>({
+            name: d.name, breed: d.breed||'믹스',
+            photo: (d.photo && d.photo.length < 3000000) ? {
+              data: d.photo.split(',')[1]||d.photo,
+              mime: d.photo.startsWith('data:image/png')?'image/png':'image/jpeg'
+            } : null
+          }))
+        })
+      });
+      if(!res.ok) throw new Error('서버 에러 ' + res.status);
+      const data = await res.json();
+      if(data.error) throw new Error(data.error);
+      const best = dogs.find(d=>d.name===data.name) || dogs[0];
+      console.log('[Vision 매칭]', best.name, '품종:', data.breed);
+      callback(best);
+    } catch(e) {
+      console.warn('[Vision 실패]', e.message, '→ 색상 fallback');
+      G._matchByColor(dogs, callback);
+    }
+  },
+
+  _matchByColor(dogs, callback){
+    callback(dogs[0]);
   },
 
   // ── TOAST ─────────────────────────────────────────

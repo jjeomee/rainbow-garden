@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>무지개 정원 관리자 v1.8</title>
+<title>무지개 정원 관리자 v1.9</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Noto Sans KR',sans-serif;background:#f5f7fa;color:#1a1a2e;min-height:100vh;padding-bottom:80px}
@@ -137,7 +137,7 @@ textarea.form-input{resize:none}
 <!-- TOP BAR -->
 <div class="topbar">
   <div class="topbar-logo">🌈 무지개 정원 관리자<span>입양센터</span></div>
-  <div class="topbar-version">v1.8</div>
+  <div class="topbar-version">v1.9</div>
 </div>
 
 <!-- PAGES -->
@@ -391,26 +391,27 @@ textarea.form-input{resize:none}
 <div id="toast"></div>
 
 <script>
-const LS_DOGS='rg_admin_dogs', LS_ACT='rg_activity';
-const getDogs=()=>{try{return JSON.parse(localStorage.getItem(LS_DOGS)||'[]')}catch(e){return[]}};
-function saveDogs(d){
-  try{
-    localStorage.setItem(LS_DOGS,JSON.stringify(d));
-  }catch(e){
-    // QuotaExceededError: 사진 제거 후 재시도
-    try{
-      const slim=d.map(x=>({...x,photo:''}));
-      localStorage.setItem(LS_DOGS,JSON.stringify(slim));
-      toast('⚠️ 저장 공간 부족으로 일부 사진이 제외됐어요');
-    }catch(e2){
-      toast('❌ 저장 실패: 저장 공간이 부족해요');
-    }
-  }
+// Vercel KV API
+const getDogs=()=>fetch('/api/dogs').then(r=>r.ok?r.json():[]).catch(()=>[]);
+function saveDogs(dogs){
+  fetch('/api/dogs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save_all',dogs})}).catch(e=>console.warn('saveDogs 실패',e));
 }
-const getActs=()=>{try{return JSON.parse(localStorage.getItem(LS_ACT)||'[]')}catch(e){return[]}};
-function saveActs(a){
-  try{ localStorage.setItem(LS_ACT,JSON.stringify(a)); }
-  catch(e){ console.warn('활동 저장 실패',e); }
+function addDogAPI(dog){
+  return fetch('/api/dogs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'add',dog})});
+}
+function updateDogAPI(dog){
+  return fetch('/api/dogs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update',dog})});
+}
+function deleteDogAPI(id){
+  return fetch('/api/dogs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id})});
+}
+const getActs=()=>fetch('/api/activity').then(r=>r.ok?r.json():[]).catch(()=>[]);
+function saveActs(a){ console.warn('saveActs deprecated'); }
+function logActivityAPI(dogId,type){
+  return fetch('/api/activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dogId,type})});
+}
+function clearActsAPI(){
+  return fetch('/api/activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'clear'})});
 }
 
 // ── 페이지 전환 ──────────────────────────────────────────────────
@@ -514,10 +515,11 @@ function registerDog(){
     registeredAt:new Date().toISOString(),
     friendCount:0,adoptCount:0,status:'waiting'
   };
-  const dogs=getDogs(); dogs.push(dog); saveDogs(dogs);
-  toast('✅ '+name+' 등록 완료!');
-  resetForm();
-  setTimeout(()=>showPage('list'),700);
+  addDogAPI(dog).then(()=>{
+    toast('✅ '+name+' 등록 완료!');
+    resetForm();
+    setTimeout(()=>showPage('list'),700);
+  });
 }
 
 function resetForm(){
@@ -528,8 +530,8 @@ function resetForm(){
 }
 
 // ── 명단 렌더 ─────────────────────────────────────────────────────
-function renderList(){
-  const dogs=getDogs();
+async function renderList(){
+  const dogs=await getDogs();
   const wrap=document.getElementById('dog-list-card');
   if(dogs.length===0){
     wrap.innerHTML='<div class="empty" style="padding:50px 0"><div class="empty-icon">🐕</div><div class="empty-text">등록된 강아지가 없어요</div><div class="empty-sub">등록 버튼을 눌러 추가해보세요</div></div>';
@@ -555,8 +557,8 @@ function renderList(){
 
 // ── 상세 시트 ─────────────────────────────────────────────────────
 let currentId='';
-function openSheet(id){
-  const dog=getDogs().find(d=>d.id===id);
+async function openSheet(id){
+  const _all=await getDogs(); const dog=_all.find(d=>d.id===id);
   if(!dog) return;
   currentId=id;
   document.getElementById('sheetTitle').textContent=dog.name+' 상세';
@@ -570,7 +572,7 @@ function openSheet(id){
     <span class="badge badge-green">친구 ${dog.friendCount}명</span>
     <span class="badge badge-pink">신청 ${dog.adoptCount}건</span>`;
   document.getElementById('sheetStory').textContent=dog.story;
-  const acts=getActs().filter(a=>a.dogId===id).slice().reverse();
+  const acts=(await getActs()).filter(a=>a.dogId===id).slice().reverse();
   const actsEl=document.getElementById('sheetActs');
   actsEl.innerHTML=acts.length===0
     ?'<div style="text-align:center;color:#ccc;font-size:13px;padding:16px 0">아직 활동이 없어요</div>'
@@ -607,20 +609,21 @@ function cancelDelete(){
   document.getElementById('sheetDelConfirm').style.display = 'none';
 }
 
-function confirmDelete(){
-  const dog = getDogs().find(d=>d.id===currentId);
-  const name = dog ? dog.name : '강아지';
-  saveDogs(getDogs().filter(d=>d.id!==currentId));
+async function confirmDelete(){
+  const dogs=await getDogs();
+  const dog=dogs.find(d=>d.id===currentId);
+  const name=dog?dog.name:'강아지';
+  await deleteDogAPI(currentId);
   closeSheetDirect();
-  toast('🗑 ' + name + ' 삭제됐어요. 정원에도 반영돼요.');
+  toast('🗑 '+name+' 삭제됐어요.');
   renderList();
 }
 
-function deleteDog(id){ /* 미사용 — askDelete/confirmDelete로 대체 */ }
+function deleteDog(id){ deleteDogAPI(id).catch(e=>console.warn(e)); }
 
 // ── 대시보드 ─────────────────────────────────────────────────────
-function renderDashboard(){
-  const dogs=getDogs(), acts=getActs();
+async function renderDashboard(){
+  const dogs=await getDogs(), acts=await getActs();
   document.getElementById('st-total').textContent=dogs.length;
   document.getElementById('st-friend').textContent=acts.filter(a=>a.type==='friend').length;
   document.getElementById('st-adopt').textContent=acts.filter(a=>a.type==='adopt').length;
@@ -644,8 +647,8 @@ function renderDashboard(){
 }
 
 // ── 활동 ─────────────────────────────────────────────────────────
-function renderActivity(){
-  const acts=getActs().slice().reverse(), dogs=getDogs();
+async function renderActivity(){
+  const acts=(await getActs()).slice().reverse(), dogs=await getDogs();
   const el=document.getElementById('activity-list');
   if(acts.length===0){
     el.innerHTML='<div class="empty"><div class="empty-icon">📋</div><div class="empty-text">아직 활동이 없어요</div></div>';
@@ -669,7 +672,7 @@ function clearActivity(){
     btn.textContent = '확인 → 초기화';
     btn.style.background='#ffeeee'; btn.style.color='#cc3030';
     btn.onclick = function(){
-      saveActs([]); renderActivity(); toast('초기화됐어요');
+      clearActsAPI().then(()=>{ renderActivity(); toast('초기화됐어요'); });
       btn.textContent='초기화'; btn.style.background=''; btn.style.color='';
       btn.onclick = clearActivity;
     };
@@ -771,7 +774,7 @@ async function handleEditPhoto(e){
   }
 }
 
-function saveEdit(){
+async function saveEdit(){
   const name  = document.getElementById('edit-name').value.trim();
   const story = document.getElementById('edit-story').value.trim();
   if(!name) { toast('이름을 입력해주세요'); return; }
@@ -794,10 +797,11 @@ function saveEdit(){
   const photo = (editNewPhoto === null) ? old.photo : editNewPhoto;
 
   dogs[idx] = { ...old, name, breed, gender, birth, age, story, status, photo };
-  saveDogs(dogs);
-
-  toast('✅ 수정 완료! 정원에도 반영됐어요 🌈');
-  showPage('list');
+  updateDogAPI(dogs[idx]).then(()=>{
+    toast('✅ 수정됐어요! 🌈');
+    showPage('list');
+    renderList();
+  });
 }
 
 // 버튼 이벤트 연결 (DOMContentLoaded 이후)
