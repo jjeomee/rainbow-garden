@@ -1195,8 +1195,8 @@ const G = {
       if(el) el.textContent=steps[si].msg;
       if(ic) ic.textContent=steps[si].icon;
     },900);
-    setTimeout(()=>{
-      G.pickMatchedDog(); // 사진 등록 시점에 매칭 강아지 결정
+    setTimeout(async ()=>{
+      await G.pickMatchedDog();
       G.closeZone('memory');
       setTimeout(()=>G.startKongStory(),400);
     },2800);
@@ -2146,8 +2146,9 @@ const G = {
         const el = document.getElementById('uploadMsg');
         if(el) el.textContent = steps[si];
       }, 900);
-      setTimeout(() => {
-        G.pickMatchedDog(); // 유사도 비교 실행
+      setTimeout(async () => {
+        await G.pickMatchedDog(); // 매칭 완료까지 대기
+        console.log('매칭 완료, matchedDog:', G._matchedDog?.name);
         G.closeZone('memory');
         setTimeout(() => G.startKongStory(), 400);
       }, 1800);
@@ -2155,25 +2156,33 @@ const G = {
     reader.readAsDataURL(file);
   },
 
-  pickMatchedDog(){
+  async pickMatchedDog(){
     try {
       const adminDogs = JSON.parse(localStorage.getItem('rg_admin_dogs') || '[]');
       const waiting = adminDogs.filter(d => d.status !== 'adopted');
       if(waiting.length === 0){ G._matchedDog = null; return; }
       if(waiting.length === 1){ G._matchedDog = G._makeDogObj(waiting[0]); return; }
 
-      // 콩이 사진이 있으면 Claude Vision으로 외모 비교
       if(G._kongPhotoB64){
-        G._matchWithVision(G._kongPhotoB64, waiting, (best) => {
-          G._matchedDog = G._makeDogObj(best);
+        // await으로 매칭 완료까지 대기
+        await new Promise(resolve => {
+          G._matchWithVision(G._kongPhotoB64, waiting, (best) => {
+            G._matchedDog = G._makeDogObj(best);
+            resolve();
+          });
         });
       } else {
-        // 콩이 사진 없으면 색상 기반 매칭 (fallback)
-        G._matchByColor(waiting, (best) => {
-          G._matchedDog = G._makeDogObj(best);
+        await new Promise(resolve => {
+          G._matchByColor(waiting, (best) => {
+            G._matchedDog = G._makeDogObj(best);
+            resolve();
+          });
         });
       }
-    } catch(e) { G._matchedDog = null; }
+    } catch(e) {
+      console.warn('pickMatchedDog 에러:', e);
+      G._matchedDog = null;
+    }
   },
 
   _makeDogObj(d){
@@ -2196,7 +2205,11 @@ const G = {
           dogs: dogs.map(d=>({
             name: d.name,
             breed: d.breed||'믹스',
-            photo: d.photo ? { data: d.photo.split(',')[1]||d.photo, mime: d.photo.startsWith('data:image/png')?'image/png':'image/jpeg' } : null
+            // 사진은 있을 때만, 너무 크면 제외 (4MB 제한)
+            photo: (d.photo && d.photo.length < 3000000) ? {
+              data: d.photo.split(',')[1]||d.photo,
+              mime: d.photo.startsWith('data:image/png')?'image/png':'image/jpeg'
+            } : null
           }))
         })
       });
