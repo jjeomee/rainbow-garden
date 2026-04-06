@@ -1176,30 +1176,9 @@ const G = {
 
   // ── PHOTO UPLOAD ──────────────────────────────────
   uploadPhoto(){
-    const slot=document.getElementById('photoSlot');
-    slot.classList.add('done');
-    // 단계별 생성 메시지
-    const steps=[
-      {icon:'📷',msg:'사진 분석 중...'},
-      {icon:'🎨',msg:'캐릭터 생성 중...'},
-      {icon:'✨',msg:'콩이 완성!'},
-    ];
-    let si=0;
-    slot.innerHTML=`<div style="font-size:36px;margin-bottom:8px">${steps[0].icon}</div><div id="uploadMsg" style="font-size:14px;color:#5cb87a;font-weight:800">${steps[0].msg}</div>`;
-    slot.onclick=null;
-    const stepTimer=setInterval(()=>{
-      si++;
-      if(si>=steps.length){clearInterval(stepTimer);return;}
-      const el=document.getElementById('uploadMsg');
-      const ic=slot.querySelector('div');
-      if(el) el.textContent=steps[si].msg;
-      if(ic) ic.textContent=steps[si].icon;
-    },900);
-    setTimeout(async ()=>{
-      await G.pickMatchedDog();
-      G.closeZone('memory');
-      setTimeout(()=>G.startKongStory(),400);
-    },2800);
+    // file input 트리거 (handleKongPhoto가 실제 처리)
+    const inp = document.getElementById('kongPhotoInput');
+    if(inp) inp.click();
   },
 
   startKongStory(){
@@ -1328,6 +1307,7 @@ const G = {
 
   startEncounter(){
     if(G.encounterDone) return;
+    console.log('[Encounter 시작] matchedDog:', G._matchedDog?.name, '| kongPhotoB64:', !!G._kongPhotoB64);
     // 어드민 사진 미리 로드
     if(G._matchedDog && G._matchedDog.photo){
       G._encMatchImg = new Image();
@@ -2161,7 +2141,7 @@ const G = {
       const adminDogs = JSON.parse(localStorage.getItem('rg_admin_dogs') || '[]');
       const waiting = adminDogs.filter(d => d.status !== 'adopted');
       if(waiting.length === 0){ G._matchedDog = null; return; }
-      if(waiting.length === 1){ G._matchedDog = G._makeDogObj(waiting[0]); return; }
+      if(waiting.length === 1){ G._matchedDog = G._makeDogObj(waiting[0]); console.log('[매칭] 1마리 → 자동선택:', waiting[0].name); return; }
 
       if(G._kongPhotoB64){
         // await으로 매칭 완료까지 대기
@@ -2221,7 +2201,8 @@ const G = {
       console.log('매칭 결과:', best.name, '(품종:', data.breed+')');
       callback(best);
     } catch(e) {
-      console.warn('Vision 실패:', e.message, '→ 색상 fallback');
+      console.error('[Vision 매칭 실패]', e.message);
+      console.error('matchedDog fallback → 색상 기반 매칭 실행');
       G._matchByColor(dogs, callback);
     }
   },
